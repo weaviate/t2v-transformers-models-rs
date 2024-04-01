@@ -1,0 +1,20 @@
+[package]
+name = "t2v-transformers-models-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+axum = "0.7.4"
+candle-core = "0.4.1"
+candle-nn = "0.4.1"
+candle-transformers = "0.4.1"
+hf-hub = "0.3.2"
+hyper = "1.2.0"
+rayon = "1.9.0"
+serde = "1.0.197"
+serde_json = "1.0.115"
+tokenizers = "0.15.2"
+tokio = { version = "1.36.0", features = ["full"] }
+tokio-rayon = "2.1.0"
