@@ -1,22 +1,20 @@
 # Rust as the base image
-FROM rust:1.49 as release
+FROM rust:1.77 as build
 
-# 1. Create a new empty shell project
-RUN USER=root cargo new --bin text2vec-burn
-WORKDIR /holodeck
+WORKDIR /app
 
 # 2. Copy our manifests
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
+COPY ./src ./src
 
 # 3. Build only the dependencies to cache them
 RUN cargo build --release
-RUN rm src/*.rs
 
-# 4. Now that the dependency is built, copy your source code
-COPY ./src ./src
+FROM rust:1.77 as release
 
 # 5. Build for release.
-RUN cargo install --path .
+WORKDIR /t2v-rs
+COPY --from=build /app/target/release/bin /usr/local/bin/t2v-rs
 
-CMD ["text2vec-burn"]
+ENTRYPOINT ["/usr/local/bin/t2v-rs"]

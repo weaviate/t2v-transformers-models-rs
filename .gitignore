@@ -18,3 +18,5 @@ __pycache__
 venv
 tch-env
 onnx/models
+benchmarking/data
+.DS_store

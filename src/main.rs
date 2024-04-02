@@ -1,9 +1,10 @@
 use std::sync::{Arc,Mutex};
 
 use axum::{
-    extract::State, http::StatusCode, routing::post, Json, Router
+    extract::State, http::StatusCode, routing::{get,post}, Json, Router
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
@@ -43,13 +44,26 @@ struct VectorsOutput {
 }
 
 trait Vectorizer: Send + Sync {
+    fn get_meta(&self) -> Meta;
     fn vectorize(& mut self, texts: Vec<String>) -> Vec<Vec<f32>>;
 }
 
 struct CandleBert {
+    meta: Meta,
     model: BertModel,
     tokenizer: Tokenizer
 }
+
+#[derive(Clone, Serialize)]
+struct Meta {
+    model_type: String,
+}
+
+#[derive(Serialize)]
+struct MetaOutput {
+    model: Meta
+}
+
 
 impl CandleBert {
     fn new(model_id: String, revision: String) -> Self {
@@ -62,8 +76,8 @@ impl CandleBert {
             let weights = api.get("model.safetensors").unwrap();
             (config, tokenizer, weights)
         };
-        let config = std::fs::read_to_string(config_filename).unwrap();
-        let mut config: Config = serde_json::from_str(&config).unwrap();
+        let config_str = std::fs::read_to_string(config_filename).unwrap();
+        let mut config: Config = serde_json::from_str(&config_str).unwrap();
         let tokenizer = Tokenizer::from_file(tokenizer_filename).unwrap();
 
         let vb = unsafe { 
@@ -71,7 +85,7 @@ impl CandleBert {
         };
         config.hidden_act = HiddenAct::GeluApproximate;
         let model = BertModel::load(vb, &config).unwrap();
-        CandleBert{model, tokenizer}
+        CandleBert{meta: Meta { model_type: "candle-bert".to_owned() }, model, tokenizer}
     }
 }
 
@@ -82,6 +96,9 @@ impl CandleBert {
 // }
 
 impl Vectorizer for CandleBert {
+    fn get_meta(&self) -> Meta {
+        self.meta.clone()
+    }
     fn vectorize(& mut self, texts: Vec<String>) -> Vec<Vec<f32>> {
         if let Some(pp) = self.tokenizer.get_padding_mut() {
             pp.strategy = tokenizers::PaddingStrategy::BatchLongest
@@ -118,35 +135,66 @@ impl Vectorizer for CandleBert {
 
 async fn vectors(
     State(state): State<AppState>,
-    Json(payload): Json<VectorsInput>
-) -> (StatusCode, Json<VectorsOutput>) {
+    Json(payload): Json<VectorInput>
+) -> (StatusCode, Json<VectorOutput>) {
+    let text = payload.text.clone();
+    let vector = tokio_rayon::spawn(move || {
+        state.vectorizer.clone().lock().unwrap().vectorize(vec![text]).pop().unwrap()
+    }).await;
+    let vector_len = vector.len();
     (
         StatusCode::OK,
-        Json(VectorsOutput {
-            vectors: tokio_rayon::spawn(move || {
-                state.vectorizer.clone().lock().unwrap().vectorize(payload.texts)
-            }).await,
+        Json(VectorOutput {
+            text: payload.text,
+            vector: vector,
+            dim: vector_len 
+        })
+    )
+}
+
+async fn live() -> StatusCode  {
+    StatusCode::NO_CONTENT
+}
+
+async fn ready() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+async fn meta(
+    State(state): State<AppState>
+) -> (StatusCode, Json<MetaOutput>) {
+    (
+        StatusCode::OK,
+        Json(MetaOutput {
+            model: state.meta
         })
     )
 }
 
 #[derive(Clone)]
 struct AppState {
+    meta: Meta,
     vectorizer: Arc<Mutex<dyn Vectorizer>>
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // let vectorizer = Arc::new(Mutex::new(RustBert::new(SentenceEmbeddingsModelType::AllMiniLmL6V2)));
-    let vectorizer = Arc::new(Mutex::new(CandleBert::new(
+    let vectorizer = CandleBert::new(
         "BAAI/bge-small-en-v1.5".to_string(),
         "refs/pr/9".to_string()
-    )));
+    );
 
-    let app_state = AppState { vectorizer };
+    let app_state = AppState {
+        meta: vectorizer.get_meta(),
+        vectorizer: Arc::new(Mutex::new(vectorizer))
+    };
 
     let app = Router::new()
         .route("/vectors", post(vectors))
+        .route("/.well-known/live", get(live))
+        .route("/.well-known/ready", get(ready))
+        .route("/meta", get(meta))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
