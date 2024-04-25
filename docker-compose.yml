@@ -21,19 +21,19 @@ services:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       ENABLE_MODULES: text2vec-transformers
-      TRANSFORMERS_INFERENCE_API: 'http://t2v-transformers-py:8080'
+      TRANSFORMERS_INFERENCE_API: 'http://t2v-transformers-py:3000'
       DEFAULT_VECTORIZER_MODULE: text2vec-transformers
       CLUSTER_HOSTNAME: 'node1'
-  # t2v-transformers-rs:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - 3000:3000
-  t2v-transformers-py:
-    image: semitechnologies/transformers-inference:baai-bge-small-en-v1.5
+  t2v-transformers-rs:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - 8081:8080
+      - 3000:3000
+  # t2v-transformers-py:
+  #   image: semitechnologies/transformers-inference:baai-bge-small-en-v1.5
+  #   ports:
+  #     - 8081:8080
 volumes:
   weaviate_data:
 ...

@@ -20,3 +20,4 @@ tch-env
 onnx/models
 benchmarking/data
 .DS_store
+.vscode
