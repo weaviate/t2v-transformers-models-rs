@@ -1,25 +1,21 @@
+mod vec;
+use crate::vec::{CandleBert, Meta, VectorInputConfig, Vectorizer};
+
+use std::env;
 use std::sync::{Arc, RwLock};
 
+use axum::response::{IntoResponse, Response};
 use axum::{
     extract::State,
     http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
+use log::info;
 use serde::{Deserialize, Serialize};
 
-use candle_core::{Device, Tensor};
-use candle_nn::VarBuilder;
-use candle_transformers::models::bert::{BertModel, Config, HiddenAct, DTYPE};
-use hf_hub::{api::sync::Api, Repo, RepoType};
-use tokenizers::{PaddingParams, Tokenizer};
-
 use tokio_rayon;
-
-#[derive(Deserialize)]
-struct VectorInputConfig {
-    pooling_strategy: String,
-}
+use vec::VectorizerConfig;
 
 #[derive(Deserialize)]
 struct VectorInput {
@@ -36,29 +32,13 @@ struct VectorsInput {
 #[derive(Serialize)]
 struct VectorOutput {
     text: String,
-    vector: Vec<f32>,
+    vector: Vec<f64>,
     dim: usize,
 }
 
 #[derive(Serialize)]
 struct VectorsOutput {
-    vectors: Vec<Vec<f32>>,
-}
-
-trait Vectorizer: Send + Sync {
-    fn get_meta(&self) -> Meta;
-    fn vectorize(&self, texts: Vec<String>) -> Vec<Vec<f32>>;
-}
-
-struct CandleBert {
-    meta: Meta,
-    model: BertModel,
-    tokenizer: Tokenizer,
-}
-
-#[derive(Clone, Serialize)]
-struct Meta {
-    model_type: String,
+    vectors: Vec<Vec<f64>>,
 }
 
 #[derive(Serialize)]
@@ -66,98 +46,41 @@ struct MetaOutput {
     model: Meta,
 }
 
-impl CandleBert {
-    fn new(model_id: String, revision: String) -> Self {
-        let repo = Repo::with_revision(model_id, RepoType::Model, revision);
-        let (config_filename, tokenizer_filename, weights_filename) = {
-            let api = Api::new().unwrap();
-            let api = api.repo(repo);
-            let config = api.get("config.json").unwrap();
-            let tokenizer = api.get("tokenizer.json").unwrap();
-            let weights = api.get("model.safetensors").unwrap();
-            (config, tokenizer, weights)
-        };
-        let config_str = std::fs::read_to_string(config_filename).unwrap();
-        let mut config: Config = serde_json::from_str(&config_str).unwrap();
-        let tokenizer = Tokenizer::from_file(tokenizer_filename).unwrap();
-
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &Device::Cpu).unwrap()
-        };
-        config.hidden_act = HiddenAct::GeluApproximate;
-        let model = BertModel::load(vb, &config).unwrap();
-        CandleBert {
-            meta: Meta {
-                model_type: "candle-bert".to_owned(),
-            },
-            model,
-            tokenizer,
-        }
-    }
-}
-
-// impl Vectorizer for RustBert {
-//     fn vectorize(&self, texts: Vec<String>) -> Vec<Vec<f32>> {
-//         self.model.encode(&texts).unwrap()
-//     }
-// }
-
-impl Vectorizer for CandleBert {
-    fn get_meta(&self) -> Meta {
-        self.meta.clone()
-    }
-    fn vectorize(&self, texts: Vec<String>) -> Vec<Vec<f32>> {
-        let mut tokenizer = self.tokenizer.clone();
-        let tokens = tokenizer
-            .with_padding(Some({
-                PaddingParams {
-                    strategy: tokenizers::PaddingStrategy::BatchLongest,
-                    ..Default::default()
-                }
-            }))
-            .encode_batch(texts.clone(), true)
-            .unwrap();
-        let token_ids = tokens
-            .iter()
-            .map(|tokens| {
-                let tokens = tokens.get_ids().to_vec();
-                Tensor::new(tokens.as_slice(), &Device::Cpu).unwrap()
-            })
-            .collect::<Vec<_>>();
-        let token_ids = Tensor::stack(&token_ids, 0).unwrap();
-        let token_type_ids = token_ids.zeros_like().unwrap();
-        println!("running inference on batch {:?}", token_ids.shape());
-        let embeddings = self.model.forward(&token_ids, &token_type_ids).unwrap();
-        println!("generated embeddings {:?}", embeddings.shape());
-        let mut out = Vec::<Vec<f32>>::new();
-        for i in 0..texts.len() {
-            let e_i = embeddings.get(0).unwrap().get(i).unwrap();
-            out.push(e_i.to_vec1().unwrap());
-        }
-        out
-    }
-}
-
-async fn vectors(
-    State(state): State<AppState>,
-    Json(payload): Json<VectorInput>,
-) -> (StatusCode, Json<VectorOutput>) {
+async fn vectors(State(state): State<AppState>, Json(payload): Json<VectorInput>) -> Response {
     let text = payload.text.clone();
+    let config = payload
+        .config
+        .unwrap_or(VectorInputConfig::new("masked_mean".to_string()));
     let vector = tokio_rayon::spawn(move || {
-        let vectorizer = state.vectorizer.read().unwrap(); // Read lock for concurrent reads
-        let vec = vectorizer.vectorize(vec![text]).pop().unwrap();
+        let vectorizer = match state.vectorizer.read() {
+            Ok(v) => v,
+            Err(_) => return Err("Failed to acquire read lock".to_string()),
+        }; // Read lock for concurrent reads of shared vectorizer memory
+        let vec = match vectorizer.vectorize(vec![text], config) {
+            Ok(mut vec) => match vec.pop() {
+                Some(v) => Ok(v),
+                None => Err("Failed to get vector".to_string()),
+            },
+            Err(e) => Err(e.to_string()),
+        };
         vec
     })
     .await;
-    let vector_len = vector.len();
-    (
-        StatusCode::OK,
-        Json(VectorOutput {
-            text: payload.text,
-            vector: vector,
-            dim: vector_len,
-        }),
-    )
+    match vector {
+        Ok(vector) => {
+            let vector_len = vector.len();
+            (
+                StatusCode::OK,
+                Json(VectorOutput {
+                    text: payload.text,
+                    vector,
+                    dim: vector_len,
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
 }
 
 async fn live() -> StatusCode {
@@ -180,10 +103,45 @@ struct AppState {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    // let vectorizer = Arc::new(Mutex::new(RustBert::new(SentenceEmbeddingsModelType::AllMiniLmL6V2)));
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
+
+    let port = match env::var("PORT") {
+        Ok(port) => port,
+        Err(_) => "3000".to_string(),
+    };
+    let model = match env::var("HF_MODEL_ID") {
+        Ok(model) => model,
+        Err(_) => panic!("HF_MODEL_ID is not set"),
+    };
+    let revision = match env::var("HF_MODEL_REVISION") {
+        Ok(revision) => revision,
+        Err(_) => panic!("HF_MODEL_REVISION is not set"),
+    };
+    let direct_tokenize = match env::var("T2V_TRANSFORMERS_DIRECT_TOKENIZE") {
+        Ok(direct_tokenize) => direct_tokenize == "true" || direct_tokenize == "1",
+        Err(_) => false,
+    };
+    let cuda_support = match env::var("ENABLE_CUDA") {
+        Ok(cuda_env) => cuda_env == "true" || cuda_env == "1",
+        Err(_) => false,
+    };
+    let cuda_core = match cuda_support {
+        true => match env::var("CUDA_CORE") {
+            Ok(cuda_core) => match cuda_core.as_str() {
+                "" => "cuda:0".to_string(),
+                _ => cuda_core,
+            },
+            Err(_) => "cuda:0".to_string(),
+        },
+        false => "".to_string(),
+    };
+
     let vectorizer = CandleBert::new(
-        "BAAI/bge-small-en-v1.5".to_string(),
-        "refs/pr/9".to_string(),
+        model,
+        revision,
+        VectorizerConfig::new(cuda_core, direct_tokenize, cuda_support),
     );
 
     let app_state = AppState {
@@ -199,7 +157,9 @@ async fn main() {
         .route("/meta", get(meta))
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("listening on {}", listener.local_addr().unwrap());
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
+        .await
+        .unwrap();
+    info!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
