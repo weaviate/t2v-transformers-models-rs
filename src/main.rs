@@ -1,5 +1,8 @@
-mod vec;
-use crate::vec::{CandleBert, Meta, VectorInputConfig, Vectorizer};
+mod vectorizer;
+use crate::{
+    vectorizer::hf::CandleBert,
+    vectorizer::{Meta, VectorInputConfig, Vectorizer}
+};
 
 use std::env;
 use std::sync::{Arc, RwLock};
@@ -15,7 +18,7 @@ use log::info;
 use serde::{Deserialize, Serialize};
 
 use tokio_rayon;
-use vec::VectorizerConfig;
+use vectorizer::VectorizerConfig;
 
 #[derive(Deserialize)]
 struct VectorInput {
