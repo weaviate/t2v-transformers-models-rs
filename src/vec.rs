@@ -53,9 +53,9 @@ impl VectorizerConfig {
         let device = match use_cuda {
             true => {
                 let core = match cuda_core.split(":").collect::<Vec<&str>>().as_slice() {
-                    [core] => core.parse::<usize>().unwrap(),
+                    [_, core] => core.parse::<usize>().unwrap(),
                     _ => panic!(
-                        "Invalid CUDA core: {}. Use the `cuda:n convention instead.",
+                        "Invalid CUDA core: {}. Use the `cuda:n` convention instead.",
                         cuda_core
                     ),
                 };

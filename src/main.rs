@@ -135,7 +135,7 @@ async fn main() {
             },
             Err(_) => "cuda:0".to_string(),
         },
-        false => "".to_string(),
+        false => "NOT_FOUND".to_string(),
     };
 
     let vectorizer = CandleBert::new(
