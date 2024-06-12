@@ -1,7 +1,7 @@
 mod vectorizer;
 use crate::{
-    vectorizer::hf::CandleBert,
-    vectorizer::{Meta, VectorInputConfig, Vectorizer}
+    vectorizer::shared::{Meta, VectorInputConfig, Vectorize, VectorizerConfig},
+    vectorizer::{candle::CandleBert, onnx::OnnxBert},
 };
 
 use std::env;
@@ -18,7 +18,6 @@ use log::info;
 use serde::{Deserialize, Serialize};
 
 use tokio_rayon;
-use vectorizer::VectorizerConfig;
 
 #[derive(Deserialize)]
 struct VectorInput {
@@ -101,7 +100,7 @@ async fn meta(State(state): State<AppState>) -> (StatusCode, Json<MetaOutput>) {
 #[derive(Clone)]
 struct AppState {
     meta: Meta,
-    vectorizer: Arc<RwLock<dyn Vectorizer>>,
+    vectorizer: Arc<RwLock<Box<dyn Vectorize>>>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -119,8 +118,8 @@ async fn main() {
         Err(_) => panic!("HF_MODEL_ID is not set"),
     };
     let revision = match env::var("HF_MODEL_REVISION") {
-        Ok(revision) => revision,
-        Err(_) => panic!("HF_MODEL_REVISION is not set"),
+        Ok(revision) => Some(revision),
+        Err(_) => None,
     };
     let direct_tokenize = match env::var("T2V_TRANSFORMERS_DIRECT_TOKENIZE") {
         Ok(direct_tokenize) => direct_tokenize == "true" || direct_tokenize == "1",
@@ -130,22 +129,19 @@ async fn main() {
         Ok(cuda_env) => cuda_env == "true" || cuda_env == "1",
         Err(_) => false,
     };
-    let cuda_core = match cuda_support {
-        true => match env::var("CUDA_CORE") {
-            Ok(cuda_core) => match cuda_core.as_str() {
-                "" => "cuda:0".to_string(),
-                _ => cuda_core,
-            },
-            Err(_) => "cuda:0".to_string(),
-        },
-        false => "NOT_FOUND".to_string(),
-    };
 
-    let vectorizer = CandleBert::new(
-        model,
-        revision,
-        VectorizerConfig::new(cuda_core, direct_tokenize, cuda_support),
-    );
+    let vectorizer: Box<dyn Vectorize> = match cuda_support {
+        true => Box::new(CandleBert::new(
+            model,
+            revision,
+            VectorizerConfig::new(direct_tokenize),
+        )),
+        false => Box::new(OnnxBert::new(
+            model,
+            revision,
+            VectorizerConfig::new(direct_tokenize),
+        )),
+    };
 
     let app_state = AppState {
         meta: vectorizer.get_meta(),

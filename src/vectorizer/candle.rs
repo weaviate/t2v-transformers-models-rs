@@ -1,31 +1,67 @@
+use crate::vectorizer::shared::{Meta, VectorInputConfig, Vectorize, VectorizerConfig};
 use log::info;
+use std::env;
 use tracing::error;
-use crate::vectorizer::{Meta, VectorInputConfig, Vectorizer, VectorizerConfig};
 
-use candle_core::{DType, Tensor};
+use candle_core::{backend::BackendDevice, CudaDevice, DType, Device, Tensor};
 use candle_nn::{
     var_builder::{SimpleBackend, VarBuilderArgs},
     VarBuilder,
 };
 use candle_transformers::models::bert::{BertModel, Config, HiddenAct};
 use hf_hub::{api::sync::Api, Repo, RepoType};
-use tokenizers::{PaddingParams, Tokenizer};
+use tokenizers::{Encoding, PaddingParams, Tokenizer};
 
 pub struct CandleBert {
     config: VectorizerConfig,
+    device: Device,
     meta: Meta,
     model: BertModel,
     tokenizer: Tokenizer,
 }
 
 impl CandleBert {
-    pub fn new(model_id: String, revision: String, vectorizer_config: VectorizerConfig) -> Self {
-        info!(
-            "loading model {} with revision {}",
-            model_id.clone(),
-            revision.clone()
-        );
-        let repo = Repo::with_revision(model_id, RepoType::Model, revision);
+    fn get_device() -> Device {
+        match env::var("CUDA_CORE") {
+            Ok(cuda_core) => match cuda_core.as_str() {
+                "" => Device::Cuda(CudaDevice::new(0).unwrap()),
+                _ => {
+                    let core = match cuda_core.split(":").collect::<Vec<&str>>().as_slice() {
+                        [_, core] => core.parse::<usize>().unwrap(),
+                        _ => panic!(
+                            "Invalid CUDA core: {}. Use the `cuda:n` convention instead.",
+                            cuda_core
+                        ),
+                    };
+                    Device::Cuda(CudaDevice::new(core).unwrap())
+                }
+            },
+            Err(_) => Device::Cuda(CudaDevice::new(0).unwrap()),
+        }
+    }
+    pub fn new(
+        model_id: String,
+        revision: Option<String>,
+        vectorizer_config: VectorizerConfig,
+    ) -> Self {
+        let device = Self::get_device(); // detect CUDA core from env
+        let repo = match revision {
+            Some(revision) => {
+                info!(
+                    "loading model {} with revision {}",
+                    model_id.clone(),
+                    revision.clone()
+                );
+                Repo::with_revision(model_id, RepoType::Model, revision)
+            }
+            None => {
+                info!(
+                    "loading model {} with no specified revision",
+                    model_id.clone()
+                );
+                Repo::new(model_id, RepoType::Model)
+            }
+        };
         let (config_filename, tokenizer_filename, weights_filename) = {
             let api = Api::new().unwrap();
             let api = api.repo(repo);
@@ -45,17 +81,13 @@ impl CandleBert {
         let tokenizer = Tokenizer::from_file(tokenizer_filename).unwrap();
 
         let vb: VarBuilderArgs<Box<dyn SimpleBackend>> = unsafe {
-            VarBuilder::from_mmaped_safetensors(
-                &[weights_filename],
-                DType::F64,
-                &vectorizer_config.device,
-            )
-            .unwrap()
+            VarBuilder::from_mmaped_safetensors(&[weights_filename], DType::F64, &device).unwrap()
         };
         config.hidden_act = HiddenAct::GeluApproximate;
         let model = BertModel::load(vb, &config).unwrap();
         CandleBert {
             config: vectorizer_config,
+            device: device,
             meta: Meta {
                 model_type: "candle-bert".to_owned(),
             },
@@ -172,40 +204,16 @@ impl CandleBert {
             }
         }
     }
-}
-
-impl Vectorizer for CandleBert {
-    fn get_meta(&self) -> Meta {
-        self.meta.clone()
-    }
-    fn vectorize(
+    fn get_tensors_from_encodings(
         &self,
-        texts: Vec<String>,
-        config: VectorInputConfig,
-    ) -> Result<Vec<Vec<f64>>, &'static str> {
-        let mut tokenizer = self.tokenizer.clone();
-        let encodings = match tokenizer
-            .with_padding(Some({
-                PaddingParams {
-                    strategy: tokenizers::PaddingStrategy::BatchLongest,
-                    ..Default::default()
-                }
-            }))
-            .encode_batch(texts.clone(), true)
-        {
-            Ok(encodings) => encodings,
-            Err(e) => {
-                error!("error tokenizing batch: {:?}", e);
-                return Err("error tokenizing batch");
-            }
-        };
-
+        encodings: Vec<Encoding>,
+    ) -> Result<(Tensor, Tensor, Tensor), &'static str> {
         let mut attention_mask_vec = Vec::<Tensor>::new();
         let mut token_ids_vec = Vec::<Tensor>::new();
         for encoding in encodings {
             let attention_mask = match Tensor::new(
                 encoding.get_attention_mask().to_vec().as_slice(),
-                &self.config.device,
+                &self.device,
             ) {
                 Ok(attention_mask) => attention_mask,
                 Err(e) => {
@@ -213,14 +221,14 @@ impl Vectorizer for CandleBert {
                     return Err("error creating attention mask tensor");
                 }
             };
-            let token_ids =
-                match Tensor::new(encoding.get_ids().to_vec().as_slice(), &self.config.device) {
-                    Ok(token_ids) => token_ids,
-                    Err(e) => {
-                        error!("error creating token ids tensor: {:?}", e);
-                        return Err("error creating token ids tensor");
-                    }
-                };
+            let token_ids = match Tensor::new(encoding.get_ids().to_vec().as_slice(), &self.device)
+            {
+                Ok(token_ids) => token_ids,
+                Err(e) => {
+                    error!("error creating token ids tensor: {:?}", e);
+                    return Err("error creating token ids tensor");
+                }
+            };
             attention_mask_vec.push(attention_mask);
             token_ids_vec.push(token_ids);
         }
@@ -246,6 +254,41 @@ impl Vectorizer for CandleBert {
                 return Err("error creating token type ids tensor");
             }
         };
+        Ok((attention_mask, token_ids, token_type_ids))
+    }
+    fn tokenize(&self, texts: Vec<String>) -> Result<Vec<Encoding>, &'static str> {
+        match self
+            .tokenizer
+            .clone()
+            .with_padding(Some({
+                PaddingParams {
+                    strategy: tokenizers::PaddingStrategy::BatchLongest,
+                    ..Default::default()
+                }
+            }))
+            .encode_batch(texts.clone(), true)
+        {
+            Ok(encodings) => Ok(encodings),
+            Err(e) => {
+                error!("error tokenizing batch: {:?}", e);
+                return Err("error tokenizing batch");
+            }
+        }
+    }
+}
+
+impl Vectorize for CandleBert {
+    fn get_meta(&self) -> Meta {
+        self.meta.clone()
+    }
+    fn vectorize(
+        &self,
+        texts: Vec<String>,
+        config: VectorInputConfig,
+    ) -> Result<Vec<Vec<f64>>, &'static str> {
+        let encodings = self.tokenize(texts)?;
+        let (attention_mask, token_ids, token_type_ids) =
+            self.get_tensors_from_encodings(encodings)?;
 
         info!("running inference on batch {:?}", token_ids.shape());
         let embeddings = match self.model.forward(&token_ids, &token_type_ids) {
@@ -258,13 +301,14 @@ impl Vectorizer for CandleBert {
         info!("generated embeddings {:?}", embeddings.shape());
 
         let vectors =
-            match self.pool_embeddings(&embeddings, &attention_mask, config.pooling_strategy) {
-                Ok(vectors) => vectors.detach(),
-                Err(e) => {
-                    error!("error pooling embeddings: {:?}", e);
-                    return Err("error pooling embeddings");
-                }
-            };
-        Ok(vec![vectors.to_vec1::<f64>().unwrap()])
+            self.pool_embeddings(&embeddings, &attention_mask, config.pooling_strategy)?;
+        let out = match vectors.to_vec1::<f64>() {
+            Ok(v) => v,
+            Err(e) => {
+                error!("error converting vectors to vec: {:?}", e);
+                return Err("error converting vectors to vec");
+            }
+        };
+        Ok(vec![out])
     }
 }
