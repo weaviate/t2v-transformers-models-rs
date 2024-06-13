@@ -1,5 +1,5 @@
 # Use just rust for the CPU build
-FROM rust:1.78 as cpu-sys
+FROM rust:1.77.1 as cpu-sys
 
 WORKDIR /app
 
@@ -36,12 +36,12 @@ FROM gpu-sys as gpu-build
 RUN cargo add candle-core --features "cuda"
 RUN cargo build --release
 
-FROM rust:1.78.0-alpine3.20 as cpu-release
+FROM rust:1.77.1-slim-bookworm as cpu-release
 COPY --from=cpu-build /app/target/release/bin /usr/local/bin/t2v-rs
 ENV ENABLE_CUDA false
-ENTRYPOINT ["/usr/local/bin/t2v-rs"]
+CMD ["/usr/local/bin/t2v-rs"]
 
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 as gpu-release
 COPY --from=gpu-build /app/target/release/bin /usr/local/bin/t2v-rs
 ENV ENABLE_CUDA true
-ENTRYPOINT ["/usr/local/bin/t2v-rs"]
+CMD ["/usr/local/bin/t2v-rs"]

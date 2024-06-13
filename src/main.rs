@@ -5,7 +5,7 @@ use crate::{
 };
 
 use std::env;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 
 use axum::response::{IntoResponse, Response};
 use axum::{
@@ -54,11 +54,7 @@ async fn vectors(State(state): State<AppState>, Json(payload): Json<VectorInput>
         .config
         .unwrap_or(VectorInputConfig::new("masked_mean".to_string()));
     let vector = tokio_rayon::spawn(move || {
-        let vectorizer = match state.vectorizer.read() {
-            Ok(v) => v,
-            Err(_) => return Err("Failed to acquire read lock".to_string()),
-        }; // Read lock for concurrent reads of shared vectorizer memory
-        let vec = match vectorizer.vectorize(vec![text], config) {
+        let vec = match state.vectorizer.vectorize(vec![text], config) {
             Ok(mut vec) => match vec.pop() {
                 Some(v) => Ok(v),
                 None => Err("Failed to get vector".to_string()),
@@ -100,7 +96,7 @@ async fn meta(State(state): State<AppState>) -> (StatusCode, Json<MetaOutput>) {
 #[derive(Clone)]
 struct AppState {
     meta: Meta,
-    vectorizer: Arc<RwLock<Box<dyn Vectorize>>>,
+    vectorizer: Arc<Box<dyn Vectorize>>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -145,7 +141,7 @@ async fn main() {
 
     let app_state = AppState {
         meta: vectorizer.get_meta(),
-        vectorizer: Arc::new(RwLock::new(vectorizer)),
+        vectorizer: Arc::new(vectorizer),
     };
 
     let app = Router::new()
