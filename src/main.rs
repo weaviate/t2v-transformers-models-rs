@@ -1,6 +1,9 @@
 mod vectorizer;
 use crate::{
-    vectorizer::shared::{Meta, VectorInputConfig, Vectorize, VectorizerConfig},
+    vectorizer::shared::{
+        get_config, get_graph, get_tokenizer, get_weights, Meta, VectorInputConfig, Vectorize,
+        VectorizerConfig,
+    },
     vectorizer::{candle::CandleBert, onnx::OnnxBert},
 };
 
@@ -112,14 +115,6 @@ async fn main() {
         Ok(port) => port,
         Err(_) => "3000".to_string(),
     };
-    let model = match env::var("HF_MODEL_ID") {
-        Ok(model) => model,
-        Err(_) => panic!("HF_MODEL_ID is not set"),
-    };
-    let revision = match env::var("HF_MODEL_REVISION") {
-        Ok(revision) => Some(revision),
-        Err(_) => None,
-    };
     let direct_tokenize = match env::var("T2V_TRANSFORMERS_DIRECT_TOKENIZE") {
         Ok(direct_tokenize) => direct_tokenize == "true" || direct_tokenize == "1",
         Err(_) => false,
@@ -128,16 +123,44 @@ async fn main() {
         Ok(cuda_env) => cuda_env == "true" || cuda_env == "1",
         Err(_) => false,
     };
+    let tokenizer = match env::var("TOKENIZER_PATH") {
+        Ok(tokenizer_filename) => std::path::PathBuf::from(tokenizer_filename.to_string()),
+        Err(_) => match env::var("HF_MODEL_ID") {
+            Ok(model) => get_tokenizer(model),
+            Err(_) => panic!("Neither TOKENIZER_PATH nor HF_MODEL_ID is set"),
+        },
+    };
+    let model = match env::var("MODEL_PATH") {
+        Ok(model_filename) => std::path::PathBuf::from(model_filename.to_string()),
+        Err(_) => match env::var("HF_MODEL_ID") {
+            Ok(model) => match cuda_support {
+                true => get_weights(model),
+                false => get_graph(model),
+            },
+            Err(_) => panic!("Neither MODEL_PATH nor HF_MODEL_ID is set"),
+        },
+    };
+    let config = match cuda_support {
+        true => match env::var("CONFIG_PATH") {
+            Ok(config_filename) => Some(std::path::PathBuf::from(config_filename.to_string())),
+            Err(_) => match env::var("HF_MODEL_ID") {
+                Ok(model) => Some(get_config(model)),
+                Err(_) => panic!("Neither CONFIG_PATH nor HF_MODEL_ID is set"),
+            },
+        },
+        false => None,
+    };
 
     let vectorizer: Box<dyn Vectorize> = match cuda_support {
         true => Box::new(CandleBert::new(
             model,
-            revision,
+            tokenizer,
+            config.unwrap(),
             VectorizerConfig::new(direct_tokenize),
         )),
         false => Box::new(OnnxBert::new(
             model,
-            revision,
+            tokenizer,
             VectorizerConfig::new(direct_tokenize),
         )),
     };

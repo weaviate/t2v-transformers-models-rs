@@ -1,4 +1,4 @@
-use std::iter::zip;
+use std::{iter::zip, path::PathBuf};
 
 use crate::vectorizer::shared::{Meta, VectorInputConfig, Vectorize, VectorizerConfig};
 use hf_hub::{api::sync::Api, Repo, RepoType};
@@ -17,50 +17,21 @@ pub struct OnnxBert {
 
 impl OnnxBert {
     pub fn new(
-        model_id: String,
-        revision: Option<String>,
+        graph: PathBuf,
+        tokenizer: PathBuf,
         vectorizer_config: VectorizerConfig,
     ) -> OnnxBert {
         ort::init()
-            .with_name(model_id.clone())
+            .with_name("ort")
             .with_execution_providers([CPUExecutionProvider::default().build()])
             .commit()
             .unwrap();
-        let repo = match revision {
-            Some(revision) => {
-                info!(
-                    "loading model {} with revision {}",
-                    model_id.clone(),
-                    revision.clone()
-                );
-                Repo::with_revision(model_id, RepoType::Model, revision)
-            }
-            None => {
-                info!(
-                    "loading model {} with no specified revision",
-                    model_id.clone()
-                );
-                Repo::new(model_id, RepoType::Model)
-            }
-        };
-        let (tokenizer_filename, graph_filename) = {
-            let api = Api::new().unwrap();
-            let api = api.repo(repo);
-
-            let tokenizer = api.get("tokenizer.json").unwrap();
-            let graph = api.get("onnx/model.onnx").unwrap();
-
-            info!("downloaded tokenizer to {}", tokenizer.to_str().unwrap());
-            info!("downloaded weights to {}", graph.to_str().unwrap());
-
-            (tokenizer, graph)
-        };
-        let tokenizer = Tokenizer::from_file(tokenizer_filename).unwrap();
+        let tokenizer = Tokenizer::from_file(tokenizer).unwrap();
         let model = Session::builder()
             .unwrap()
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .unwrap()
-            .commit_from_file(graph_filename)
+            .commit_from_file(graph)
             .unwrap();
         OnnxBert {
             config: vectorizer_config,

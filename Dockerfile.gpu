@@ -1,0 +1,59 @@
+ARG CUDA_VERSION
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 as sys
+
+# Install rust dependencies
+RUN apt-get update -qq \
+    && apt-get install -qq -y vim gcc g++ curl git build-essential libssl-dev openssl pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install Python
+RUN apt-get update && \
+    apt-get install -y python3-pip python3-dev python3.10-venv && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy our manifests
+COPY ./Cargo.lock ./Cargo.lock
+COPY ./Cargo.toml ./Cargo.toml
+COPY ./src ./src
+COPY ./ci ./ci
+
+FROM sys as build
+WORKDIR /app
+
+RUN python3 -m venv venv
+RUN . venv/bin/activate
+# Install Python scripts for model download
+RUN pip install -r ci/requirements.txt
+
+ARG TARGETARCH
+ARG MODEL_NAME
+
+ENV MODEL_NAME ${MODEL_NAME}
+ENV ONNX_RUNTIME false
+ENV ONNX_CPU=${TARGETARCH}
+
+ENV MODEL_DIR "./models/model"
+# Download the models
+RUN python3 -m ci.download
+
+# Build only the dependencies to cache them
+RUN cargo add candle-core --features "cuda"
+RUN cargo build --release
+
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 as release
+
+COPY --from=build /app/models/model /usr/local/models/model
+COPY --from=build /app/target/release/bin /usr/local/bin/t2v-rs
+
+ENV ENABLE_CUDA true
+ENV MODEL_PATH /usr/local/models/model/model.safetensors
+ENV TOKENIZER_PATH /usr/local/models/model/tokenizer.json
+ENV CONFIG_PATH /usr/local/models/model/config.json
+
+CMD ["/usr/local/bin/t2v-rs"]

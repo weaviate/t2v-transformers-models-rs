@@ -1,6 +1,6 @@
 use crate::vectorizer::shared::{Meta, VectorInputConfig, Vectorize, VectorizerConfig};
 use log::info;
-use std::env;
+use std::{env, path::PathBuf};
 use tracing::error;
 
 use candle_core::{backend::BackendDevice, CudaDevice, DType, Device, Tensor};
@@ -40,48 +40,19 @@ impl CandleBert {
         }
     }
     pub fn new(
-        model_id: String,
-        revision: Option<String>,
+        weights: PathBuf,
+        tokenizer: PathBuf,
+        config: PathBuf,
         vectorizer_config: VectorizerConfig,
     ) -> Self {
         let device = Self::get_device(); // detect CUDA core from env
-        let repo = match revision {
-            Some(revision) => {
-                info!(
-                    "loading model {} with revision {}",
-                    model_id.clone(),
-                    revision.clone()
-                );
-                Repo::with_revision(model_id, RepoType::Model, revision)
-            }
-            None => {
-                info!(
-                    "loading model {} with no specified revision",
-                    model_id.clone()
-                );
-                Repo::new(model_id, RepoType::Model)
-            }
-        };
-        let (config_filename, tokenizer_filename, weights_filename) = {
-            let api = Api::new().unwrap();
-            let api = api.repo(repo);
 
-            let config = api.get("config.json").unwrap();
-            let tokenizer = api.get("tokenizer.json").unwrap();
-            let weights = api.get("model.safetensors").unwrap();
-
-            info!("downloaded config to {}", config.to_str().unwrap());
-            info!("downloaded tokenizer to {}", tokenizer.to_str().unwrap());
-            info!("downloaded weights to {}", weights.to_str().unwrap());
-
-            (config, tokenizer, weights)
-        };
-        let config_str = std::fs::read_to_string(config_filename).unwrap();
+        let config_str = std::fs::read_to_string(config).unwrap();
         let mut config: Config = serde_json::from_str(&config_str).unwrap();
-        let tokenizer = Tokenizer::from_file(tokenizer_filename).unwrap();
+        let tokenizer = Tokenizer::from_file(tokenizer).unwrap();
 
         let vb: VarBuilderArgs<Box<dyn SimpleBackend>> = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[weights_filename], DType::F64, &device).unwrap()
+            VarBuilder::from_mmaped_safetensors(&[weights], DType::F64, &device).unwrap()
         };
         config.hidden_act = HiddenAct::GeluApproximate;
         let model = BertModel::load(vb, &config).unwrap();

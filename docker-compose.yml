@@ -4,13 +4,14 @@ services:
   t2v-transformers-rs-gpu:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: gpu-release
+      dockerfile: Dockerfile.gpu
+      target: release
+      args:
+        - MODEL_NAME: "BAAI/bge-small-en-v1.5"
+        - TARGETARCH: "arm64"
+        - CUDA_VERSION: "12.4.1"
     ports:
       - 3000:3000
-    environment:
-      HF_MODEL_ID: "BAAI/bge-small-en-v1.5"
-      HF_MODEL_REVISION: "refs/pr/9"
     deploy:
       resources:
         reservations:
@@ -21,13 +22,13 @@ services:
   t2v-transformers-rs-cpu:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: cpu-release
+      dockerfile: Dockerfile.cpu
+      target: release
+      args:
+        - MODEL_NAME: "BAAI/bge-small-en-v1.5"
+        - TARGETARCH: "arm64"
     ports:
       - 3000:3000
-    environment:
-      HF_MODEL_ID: "BAAI/bge-small-en-v1.5"
-      HF_MODEL_REVISION: "refs/pr/9"
   t2v-transformers-py-gpu:
     image: semitechnologies/transformers-inference:baai-bge-small-en-v1.5
     ports:

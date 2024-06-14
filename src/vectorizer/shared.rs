@@ -1,3 +1,5 @@
+use hf_hub::{api::sync::Api, Repo, RepoType};
+use log::info;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -35,4 +37,32 @@ impl VectorizerConfig {
             use_direct_tokenize,
         }
     }
+}
+
+pub fn get_weights(model: String) -> std::path::PathBuf {
+    let api = Api::new().unwrap().repo(Repo::new(model, RepoType::Model));
+    let weights = api.get("model.safetensors").unwrap();
+    info!("downloaded weights to {}", weights.to_str().unwrap());
+    weights
+}
+
+pub fn get_graph(model: String) -> std::path::PathBuf {
+    let api = Api::new().unwrap().repo(Repo::new(model, RepoType::Model));
+    let graph = api.get("onnx/model.onnx").unwrap();
+    info!("downloaded graph to {}", graph.to_str().unwrap());
+    graph
+}
+
+pub fn get_tokenizer(model: String) -> std::path::PathBuf {
+    let api = Api::new().unwrap().repo(Repo::new(model, RepoType::Model));
+    let tokenizer = api.get("tokenizer.json").unwrap();
+    info!("downloaded tokenizer to {}", tokenizer.to_str().unwrap());
+    tokenizer
+}
+
+pub fn get_config(model: String) -> std::path::PathBuf {
+    let api = Api::new().unwrap().repo(Repo::new(model, RepoType::Model));
+    let config = api.get("config.json").unwrap();
+    info!("downloaded config to {}", config.to_str().unwrap());
+    config
 }
