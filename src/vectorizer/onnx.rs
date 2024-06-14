@@ -193,6 +193,7 @@ impl Vectorize for OnnxBert {
         config: VectorInputConfig,
     ) -> Result<Vec<Vec<f64>>, &'static str> {
         let encodings = self.tokenize(texts)?;
+
         let input = self.get_inputs_from_encodings(encodings);
         let inputs = match inputs! {
             "attention_mask" => input.0.clone(),
@@ -205,6 +206,8 @@ impl Vectorize for OnnxBert {
                 return Err("error creating input");
             }
         };
+
+        let start = std::time::Instant::now();
         let outputs = match self.model.run(inputs) {
             Ok(outputs) => outputs,
             Err(e) => {
@@ -215,11 +218,14 @@ impl Vectorize for OnnxBert {
         let (dim, embeddings) = outputs["last_hidden_state"]
             .try_extract_raw_tensor::<f32>()
             .unwrap();
+        info!("generating embeddings {:?} took {:?}", dim, start.elapsed());
+
         let out = Array3::from_shape_vec(
             (dim[0] as usize, dim[1] as usize, dim[2] as usize),
             embeddings.to_vec(),
         )
         .unwrap();
+
         Ok(self.mean_pooling(out, input.0))
     }
 }

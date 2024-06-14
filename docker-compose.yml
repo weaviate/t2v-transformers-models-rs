@@ -1,30 +1,24 @@
 ---
 version: '3.4'
 services:
-  # weaviate:
-  #   command:
-  #   - --host
-  #   - 0.0.0.0
-  #   - --port
-  #   - '8080'
-  #   - --scheme
-  #   - http
-  #   image: semitechnologies/weaviate:1.24.5
-  #   ports:
-  #   - 8080:8080
-  #   - 50051:50051
-  #   volumes:
-  #   - weaviate_data:/var/lib/weaviate
-  #   restart: on-failure:0
-  #   environment:
-  #     QUERY_DEFAULTS_LIMIT: 25
-  #     AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
-  #     PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
-  #     ENABLE_MODULES: text2vec-transformers
-  #     TRANSFORMERS_INFERENCE_API: 'http://t2v-transformers-py:3000'
-  #     DEFAULT_VECTORIZER_MODULE: text2vec-transformers
-  #     CLUSTER_HOSTNAME: 'node1'
-  t2v-transformers-rs:
+  t2v-transformers-rs-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: gpu-release
+    ports:
+      - 3000:3000
+    environment:
+      HF_MODEL_ID: "BAAI/bge-small-en-v1.5"
+      HF_MODEL_REVISION: "refs/pr/9"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+  t2v-transformers-rs-cpu:
     build:
       context: .
       dockerfile: Dockerfile
@@ -34,10 +28,24 @@ services:
     environment:
       HF_MODEL_ID: "BAAI/bge-small-en-v1.5"
       HF_MODEL_REVISION: "refs/pr/9"
-  t2v-transformers-py:
+  t2v-transformers-py-gpu:
+    image: semitechnologies/transformers-inference:baai-bge-small-en-v1.5
+    ports:
+      - 8080:8080
+    environment:
+      ENABLE_CUDA: "true"
+      T2V_TRANSFORMERS_DIRECT_TOKENIZE: "true"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+  t2v-transformers-py-cpu:
     image: semitechnologies/transformers-inference:baai-bge-small-en-v1.5-onnx
     ports:
       - 8080:8080
-volumes:
-  weaviate_data:
+    environment:
+      T2V_TRANSFORMERS_DIRECT_TOKENIZE: "true"
 ...

@@ -287,10 +287,11 @@ impl Vectorize for CandleBert {
         config: VectorInputConfig,
     ) -> Result<Vec<Vec<f64>>, &'static str> {
         let encodings = self.tokenize(texts)?;
+
         let (attention_mask, token_ids, token_type_ids) =
             self.get_tensors_from_encodings(encodings)?;
 
-        info!("running inference on batch {:?}", token_ids.shape());
+        let start = std::time::Instant::now();
         let embeddings = match self.model.forward(&token_ids, &token_type_ids) {
             Ok(embeddings) => embeddings,
             Err(e) => {
@@ -298,10 +299,15 @@ impl Vectorize for CandleBert {
                 return Err("error running inference");
             }
         };
-        info!("generated embeddings {:?}", embeddings.shape());
+        info!(
+            "generating embeddings {:?} took {:?}",
+            embeddings.shape(),
+            start.elapsed()
+        );
 
         let vectors =
             self.pool_embeddings(&embeddings, &attention_mask, config.pooling_strategy)?;
+
         let out = match vectors.to_vec1::<f64>() {
             Ok(v) => v,
             Err(e) => {

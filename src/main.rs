@@ -5,7 +5,7 @@ use crate::{
 };
 
 use std::env;
-use std::sync::{Arc};
+use std::sync::Arc;
 
 use axum::response::{IntoResponse, Response};
 use axum::{
@@ -36,6 +36,7 @@ struct VectorOutput {
     text: String,
     vector: Vec<f64>,
     dim: usize,
+    taken: f64,
 }
 
 #[derive(Serialize)]
@@ -53,6 +54,7 @@ async fn vectors(State(state): State<AppState>, Json(payload): Json<VectorInput>
     let config = payload
         .config
         .unwrap_or(VectorInputConfig::new("masked_mean".to_string()));
+    let start = std::time::Instant::now();
     let vector = tokio_rayon::spawn(move || {
         let vec = match state.vectorizer.vectorize(vec![text], config) {
             Ok(mut vec) => match vec.pop() {
@@ -73,6 +75,7 @@ async fn vectors(State(state): State<AppState>, Json(payload): Json<VectorInput>
                     text: payload.text,
                     vector,
                     dim: vector_len,
+                    taken: start.elapsed().as_secs_f64(),
                 }),
             )
                 .into_response()
