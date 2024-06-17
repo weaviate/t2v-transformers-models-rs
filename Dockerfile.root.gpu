@@ -1,0 +1,23 @@
+ARG CUDA_VERSION
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
+LABEL org.opencontainers.image.source https://github.com/weaviate/t2v-transformers-models-rs
+
+# Install rust dependencies
+RUN apt-get update -qq \
+    && apt-get install -qq -y vim gcc g++ curl git build-essential libssl-dev openssl pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install Python
+RUN apt-get update && \
+    apt-get install -y python3-pip python3-dev python3.10-venv && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv venv
+RUN . venv/bin/activate
+# Install Python scripts for model download
+COPY ./ci/requirements.txt ci/requirements.txt
+RUN pip install -r ci/requirements.txt
