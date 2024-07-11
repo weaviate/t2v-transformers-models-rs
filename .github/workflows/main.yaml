@@ -69,11 +69,7 @@ jobs:
           username: ${{github.actor}}
           password: ${{secrets.GITHUB_TOKEN}}
       - name: 'Build Production CPU Image'
-        run: docker build .\
-          --build-arg MODEL_NAME=${{matrix.model}}\
-          --build-arg TARGETARCH=${{matrix.targetarch}}\
-          --file Dockerfile.cpu\
-          --target release
+        run: docker build . --build-arg MODEL_NAME=${{matrix.model}} --build-arg TARGETARCH=${{matrix.targetarch}} --file Dockerfile.cpu --target release
 
   # builds the CUDA images for the available models
   build-gpu-image:
@@ -106,9 +102,4 @@ jobs:
           username: ${{github.actor}}
           password: ${{secrets.GITHUB_TOKEN}}
       - name: 'Build Production GPU Image'
-        run: docker build .\
-          --build-arg MODEL_NAME=${{matrix.model}}\
-          --build-arg TARGETARCH=${{matrix.targetarch}}\
-          --build-arg CUDA_VERSION=${{matrix.cuda}}\
-          --file Dockerfile.gpu\
-          --target release
+        run: docker build . --build-arg MODEL_NAME=${{matrix.model}} --build-arg TARGETARCH=${{matrix.targetarch}} --build-arg CUDA_VERSION=${{matrix.cuda}} --file Dockerfile.gpu --target release
