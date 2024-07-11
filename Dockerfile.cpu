@@ -3,7 +3,6 @@ RUN . venv/bin/activate
 WORKDIR /app
 
 # Copy our manifests
-COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
 COPY ./src ./src
 COPY ./ci ./ci
