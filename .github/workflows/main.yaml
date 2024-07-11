@@ -74,7 +74,6 @@ jobs:
           --build-arg TARGETARCH=${{matrix.targetarch}}\
           --file Dockerfile.cpu\
           --target release
-          -t
 
   # builds the CUDA images for the available models
   build-gpu-image:
@@ -113,4 +112,3 @@ jobs:
           --build-arg CUDA_VERSION=${{matrix.cuda}}\
           --file Dockerfile.gpu\
           --target release
-          -t 
