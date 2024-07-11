@@ -5,22 +5,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  CUDA_VERSIONS: [12.0.1, 12.1.1, 12.2.2, 12.3.2, 12.4.1, 12.5.0]
-  MODELS: [
-    BAAI/bge-small-en-v1.5,
-    # BAAI/bge-medium-en-v1.5,
-    # BAAI/bge-large-en-v1.5,
-    # Snowflake/snowflake-artic-embed-xs,
-    # Snowflake/snowflake-artic-embed-s,
-    # Snowflake/snowflake-artic-embed-m,
-    # Snowflake/snowflake-artic-embed-l,
-    # mixedbread-ai/mxbai-embed-large-v1,
-    # sentence-transformers/all-MiniLM-L6-v2,
-    # sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-  ]
-  TARGETARCHS: [amd64, arm64]
-
 jobs:
   # builds all the base images required to build the full GPU-capable CUDA-enabled Docker images 
   build-base-gpu-image:
@@ -28,7 +12,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        cuda: $CUDA_VERSIONS
+        cuda: [12.5.0] # [12.0.1, 12.1.1, 12.2.2, 12.3.2, 12.4.1, 12.5.0]
     steps:
       - name: 'Checkout GitHub Action'
         uses: actions/checkout@main
@@ -62,7 +46,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: $MODELS
+        model: [
+          BAAI/bge-small-en-v1.5,
+          # BAAI/bge-medium-en-v1.5,
+          # BAAI/bge-large-en-v1.5,
+          # Snowflake/snowflake-artic-embed-xs,
+          # Snowflake/snowflake-artic-embed-s,
+          # Snowflake/snowflake-artic-embed-m,
+          # Snowflake/snowflake-artic-embed-l,
+          # mixedbread-ai/mxbai-embed-large-v1,
+          # sentence-transformers/all-MiniLM-L6-v2,
+          # sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+        ]
         targetarch: $TARGETARCHS
     steps:
       - name: 'Checkout GitHub Action'
@@ -88,8 +83,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: $MODELS
-        targetarch: $TARGETARCHS
+        cuda: [12.5.0] # [12.0.1, 12.1.1, 12.2.2, 12.3.2, 12.4.1, 12.5.0]
+        model: [
+          BAAI/bge-small-en-v1.5,
+          # BAAI/bge-medium-en-v1.5,
+          # BAAI/bge-large-en-v1.5,
+          # Snowflake/snowflake-artic-embed-xs,
+          # Snowflake/snowflake-artic-embed-s,
+          # Snowflake/snowflake-artic-embed-m,
+          # Snowflake/snowflake-artic-embed-l,
+          # mixedbread-ai/mxbai-embed-large-v1,
+          # sentence-transformers/all-MiniLM-L6-v2,
+          # sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+        ]
+        targetarch: [arm64] #[amd64, arm64]
     steps:
       - name: 'Checkout GitHub Action'
         uses: actions/checkout@main
@@ -103,6 +110,7 @@ jobs:
         run: docker build .\
           --build-arg MODEL_NAME=${{matrix.model}}\
           --build-arg TARGETARCH=${{matrix.targetarch}}\
+          --build-arg CUDA_VERSION=${{matrix.cuda}}\
           --file Dockerfile.gpu\
           --target release
           -t 
