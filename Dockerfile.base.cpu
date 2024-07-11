@@ -1,4 +1,5 @@
 FROM ubuntu:22.04
+LABEL org.opencontainers.image.source https://github.com/weaviate/t2v-transformers-models-rs
 
 # Install rust dependencies
 RUN apt-get update -qq \

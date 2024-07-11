@@ -4,21 +4,104 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  CUDA_VERSIONS: [12.0.1, 12.1.1, 12.2.2, 12.3.2, 12.4.1, 12.5.0]
+  MODELS: [
+    BAAI/bge-small-en-v1.5,
+    # BAAI/bge-medium-en-v1.5,
+    # BAAI/bge-large-en-v1.5,
+    # Snowflake/snowflake-artic-embed-xs,
+    # Snowflake/snowflake-artic-embed-s,
+    # Snowflake/snowflake-artic-embed-m,
+    # Snowflake/snowflake-artic-embed-l,
+    # mixedbread-ai/mxbai-embed-large-v1,
+    # sentence-transformers/all-MiniLM-L6-v2,
+    # sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+  ]
+  TARGETARCHS: [amd64, arm64]
+
 jobs:
-  build-root-gpu-image:
+  # builds all the base images required to build the full GPU-capable CUDA-enabled Docker images 
+  build-base-gpu-image:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: true
       matrix:
-        cuda: [12.0.1, 12.1.1, 12.2.2, 12.3.2, 12.4.1, 12.5.0]
+        cuda: $CUDA_VERSIONS
     steps:
       - name: 'Checkout GitHub Action'
         uses: actions/checkout@main
-
       - name: 'Login to GitHub Container Registry'
         uses: docker/login-action@v1
         with:
           registry: ghcr.io
           username: ${{github.actor}}
           password: ${{secrets.GITHUB_TOKEN}}
-      - name: 'Build Root GPU Image'
-        run: CUDA_VERSION=${{matrix.cuda}} ./ci/bash/build_root_gpu_image.sh
+      - name: 'Build Base GPU Image'
+        run: CUDA_VERSION=${{matrix.cuda}} ./ci/bash/build_base_gpu_image.sh
+  # builds the base image required to build the ONX CPU-bound Docker images
+  build-base-cpu-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout GitHub Action'
+        uses: actions/checkout@main
+      - name: 'Login to GitHub Container Registry'
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
+      - name: 'Build Base CPU Image'
+        run: ./ci/bash/build_base_cpu_image.sh
+
+  # builds the ONNX images for the available models
+  build-cpu-image:
+    runs-on: ubuntu-latest
+    needs: [build-base-cpu-image]
+    strategy:
+      fail-fast: false
+      matrix:
+        model: $MODELS
+        targetarch: $TARGETARCHS
+    steps:
+      - name: 'Checkout GitHub Action'
+        uses: actions/checkout@main
+      - name: 'Login to GitHub Container Registry'
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
+      - name: 'Build Production CPU Image'
+        run: docker build .\
+          --build-arg MODEL_NAME=${{matrix.model}}\
+          --build-arg TARGETARCH=${{matrix.targetarch}}\
+          --file Dockerfile.cpu\
+          --target release
+          -t
+
+  # builds the CUDA images for the available models
+  build-gpu-image:
+    runs-on: gpu-t4-4-core
+    needs: [build-base-gpu-image]
+    strategy:
+      fail-fast: false
+      matrix:
+        model: $MODELS
+        targetarch: $TARGETARCHS
+    steps:
+      - name: 'Checkout GitHub Action'
+        uses: actions/checkout@main
+      - name: 'Login to GitHub Container Registry'
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
+      - name: 'Build Production GPU Image'
+        run: docker build .\
+          --build-arg MODEL_NAME=${{matrix.model}}\
+          --build-arg TARGETARCH=${{matrix.targetarch}}\
+          --file Dockerfile.gpu\
+          --target release
+          -t 
